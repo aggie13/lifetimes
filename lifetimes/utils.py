@@ -18,7 +18,8 @@ __all__ = ['calibration_and_holdout_data',
 
 
 def calibration_and_holdout_data(transactions, customer_id_col, datetime_col, calibration_period_end,
-                                 observation_period_end=None, freq='D', datetime_format=None,
+                                 observation_period_end=None, freq='D', freq_multiplier=1,
+                                 datetime_format=None,
                                  monetary_value_col=None):
     """
     Create a summary of each customer over a calibration and holdout period.
@@ -80,6 +81,7 @@ def calibration_and_holdout_data(transactions, customer_id_col, datetime_col, ca
                                                                   datetime_format=datetime_format,
                                                                   observation_period_end=calibration_period_end,
                                                                   freq=freq,
+                                                                  freq_multiplier=freq_multiplier,
                                                                   monetary_value_col=monetary_value_col)
     calibration_summary_data.columns = [c + '_cal' for c in calibration_summary_data.columns]
 
@@ -90,15 +92,19 @@ def calibration_and_holdout_data(transactions, customer_id_col, datetime_col, ca
     holdout_summary_data = holdout_transactions.groupby([customer_id_col, datetime_col], sort=False).agg(lambda r: 1)\
                                                .groupby(level=customer_id_col).agg(['count'])
     holdout_summary_data.columns = ['frequency_holdout']
+    # print(holdout_summary_data.head())
     if monetary_value_col:
         holdout_summary_data['monetary_value_holdout'] = \
-            holdout_transactions.groupby(customer_id_col)[monetary_value_col].mean()
+            holdout_transactions.groupby([customer_id_col, datetime_col]).sum()\
+            .groupby(customer_id_col)[monetary_value_col].mean().fillna(0)
 
     combined_data = calibration_summary_data.join(holdout_summary_data, how='left')
     combined_data.fillna(0, inplace=True)
 
-    delta_time = to_period(observation_period_end) - to_period(calibration_period_end)
+    # delta_time = to_period(observation_period_end) - to_period(calibration_period_end)
+    delta_time = (to_period(observation_period_end) - to_period(calibration_period_end)) / freq_multiplier
     combined_data['duration_holdout'] = delta_time
+    combined_data['duration_holdout'].astype(float)
 
     return combined_data
 
@@ -382,7 +388,7 @@ def _check_inputs(frequency, recency=None, T=None, monetary_value=None):
     # more order-periods than periods.
 
 
-def _customer_lifetime_value(transaction_prediction_model, frequency, recency, T, monetary_value, time=12, discount_rate=0.01):
+def _customer_lifetime_value(transaction_prediction_model, frequency, recency, T, monetary_value, freq='M', time=12, discount_rate=0.01):
     """
     Compute the average lifetime value for a group of one or more customers.
 
@@ -400,8 +406,10 @@ def _customer_lifetime_value(transaction_prediction_model, frequency, recency, T
         the vector of customers' age (time since first purchase)
     monetary_value: array_like
         the monetary value vector of customer's purchases (denoted m in literature).
+    freq: string
+        Default 'D' for days. Other examples= 'W' for weekly
     time: int, optional
-        the lifetime expected for the user in months. Default: 12
+        the lifetime expected for the user in units intervals. Default: 12
     discount_rate: float, optional
         the monthly adjusted discount rate. Default: 1
 
@@ -411,14 +419,27 @@ def _customer_lifetime_value(transaction_prediction_model, frequency, recency, T
         series with customer ids as index and the estimated customer lifetime values as values
 
     """
+    intervals={'D': 30, 'M': 1, 'W': 4}
     df = pd.DataFrame(index=frequency.index)
     df['clv'] = 0  # initialize the clv column to zeros
-
-    for i in range(30, (time * 30) + 1, 30):
+    # if freq=='D':
+    #     for i in range(30, (time * 30) + 1, 30):
+    #         # since the prediction of number of transactions is cumulative, we have to subtract off the previous periods
+    #         expected_number_of_transactions = transaction_prediction_model.predict(i, frequency, recency, T) - transaction_prediction_model.predict(i - 30, frequency, recency, T)
+    #         # sum up the CLV estimates of all of the periods
+    #         df['clv'] += (monetary_value * expected_number_of_transactions) / (1 + discount_rate) ** (i / 30)
+    # if freq == 'M':
+    #     for i in range(1, time+1, 1):
+    #         # since the prediction of number of transactions is cumulative, we have to subtract off the previous periods
+    #         expected_number_of_transactions = transaction_prediction_model.predict(i, frequency, recency, T) - transaction_prediction_model.predict(i - 1, frequency, recency, T)
+    #         # sum up the CLV estimates of all of the periods
+    #         df['clv'] += (monetary_value * expected_number_of_transactions) / (1 + discount_rate) ** (i / 1)
+    # if freq == 'W':
+    for i in range(1 * intervals[freq], (time * intervals[freq]) + 1, intervals[freq]):
         # since the prediction of number of transactions is cumulative, we have to subtract off the previous periods
-        expected_number_of_transactions = transaction_prediction_model.predict(i, frequency, recency, T) - transaction_prediction_model.predict(i - 30, frequency, recency, T)
+        expected_number_of_transactions = transaction_prediction_model.predict(i, frequency, recency, T) - transaction_prediction_model.predict(i - intervals[freq], frequency, recency, T)
         # sum up the CLV estimates of all of the periods
-        df['clv'] += (monetary_value * expected_number_of_transactions) / (1 + discount_rate) ** (i / 30)
+        df['clv'] += (monetary_value * expected_number_of_transactions) / (1 + discount_rate) ** (i / intervals[freq])
 
     return df['clv']  # return as a series
 

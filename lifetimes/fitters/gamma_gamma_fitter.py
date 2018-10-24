@@ -169,7 +169,7 @@ class GammaGammaFitter(BaseFitter):
         return self
 
     def customer_lifetime_value(self, transaction_prediction_model, frequency,
-                                recency, T, monetary_value, time=12,
+                                recency, T, monetary_value, time=12, freq='D',
                                 discount_rate=0.01):
         """
         Return customer lifetime value.
@@ -208,5 +208,5 @@ class GammaGammaFitter(BaseFitter):
         adjusted_monetary_value = self.conditional_expected_average_profit(
             frequency, monetary_value)
         return _customer_lifetime_value(transaction_prediction_model, frequency,
-                                        recency, T, adjusted_monetary_value,
+                                        recency, T, adjusted_monetary_value, freq,
                                         time, discount_rate)
